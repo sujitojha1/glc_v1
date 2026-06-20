@@ -37,3 +37,4 @@ install_token
 
 # Logs
 *.log
+docs/class_notes_hidden/*
