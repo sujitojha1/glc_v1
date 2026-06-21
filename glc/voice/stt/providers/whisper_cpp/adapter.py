@@ -92,9 +92,7 @@ class Provider(STTProvider):
 
         use_vad = _should_use_vad(audio)
         try:
-            text, language, duration_ms = await asyncio.to_thread(
-                run_whisper_cpp, audio, mime, use_vad
-            )
+            text, language, duration_ms = await asyncio.to_thread(run_whisper_cpp, audio, mime, use_vad)
         except STTError:
             # Already in the canonical shape (e.g. raised upstream) — let it pass.
             raise

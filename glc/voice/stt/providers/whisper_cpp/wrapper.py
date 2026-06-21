@@ -28,9 +28,7 @@ MODEL_FILE = MODEL_DIR / "ggml-base.bin"
 def vad_model_path() -> Path:
     """Resolve the Silero VAD model path (read per call so it is testable)."""
     return Path(
-        os.path.expanduser(
-            os.getenv("GLC_WHISPER_VAD_MODEL", str(MODEL_DIR / "ggml-silero-v6.2.0.bin"))
-        )
+        os.path.expanduser(os.getenv("GLC_WHISPER_VAD_MODEL", str(MODEL_DIR / "ggml-silero-v6.2.0.bin")))
     )
 
 
