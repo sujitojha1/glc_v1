@@ -70,7 +70,20 @@ def _is_silent(audio: bytes) -> bool:
 
 
 def _duration_s(audio: bytes) -> float:
-    """Approximate clip length in seconds (16 kHz mono 16-bit assumption)."""
+    """Approximate clip length in seconds.
+
+    Uses the WAV header's real frame count and sample rate when the input
+    is a RIFF container, so the VAD length decision is correct even for
+    non-16 kHz audio. Falls back to the headerless 16 kHz mono 16-bit PCM
+    assumption for raw input or a malformed container.
+    """
+    if audio[:4] == b"RIFF" and audio[8:12] == b"WAVE":
+        try:
+            with wave.open(io.BytesIO(audio), "rb") as w:
+                rate = w.getframerate() or SAMPLE_RATE
+                return w.getnframes() / rate
+        except (wave.Error, EOFError):
+            pass
     return len(audio) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
 
 
