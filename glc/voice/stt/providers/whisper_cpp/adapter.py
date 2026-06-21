@@ -1,7 +1,9 @@
-"""Stub provider for whisper.cpp (local, offline).
+"""whisper.cpp (local, offline) STT provider.
 
-Group assignment: implement `transcribe(audio, mime)` against the
-mock-API fake in tests/voice/stt/mocks/whisper_cpp_mock.py.
+Subclasses `STTProvider` and returns the canonical `TranscribeResult`
+shape so callers can't tell which provider ran. Mock-upstream
+delegation, VAD silence short-circuit, error propagation, and the
+production subprocess path land in later slices.
 """
 
 from __future__ import annotations
@@ -13,8 +15,10 @@ class Provider(STTProvider):
     name = "whisper_cpp"
 
     async def transcribe(self, audio: bytes, mime: str) -> TranscribeResult:
-        raise NotImplementedError(
-            "Group assignment: implement transcribe(). "
-            "See docs/ADAPTER_GUIDE.md and "
-            "glc/voice/stt/providers/whisper_cpp/README.md."
+        return TranscribeResult(
+            text="",
+            language="en",
+            duration_ms=0,
+            provider=self.name,
+            cost_usd=0.0,
         )
