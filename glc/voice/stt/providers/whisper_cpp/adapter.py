@@ -3,11 +3,13 @@
 Subclasses `STTProvider` and returns the canonical `TranscribeResult`
 shape so callers can't tell which provider ran. Silent input is
 VAD-detected and short-circuited before any upstream/subprocess work.
-Mock-upstream delegation, error propagation, and the production
-subprocess path land in later slices.
+With no mock configured, the real whisper-cli subprocess path runs.
+Error propagation hardening lands in a later slice.
 """
 
 from __future__ import annotations
+
+import asyncio
 
 from glc.voice.stt.base import STTProvider, TranscribeResult
 
@@ -52,7 +54,18 @@ class Provider(STTProvider):
                 cost_usd=0.0,
             )
 
-        # Production subprocess path lands in a later slice (#9).
-        raise NotImplementedError(
-            "whisper_cpp production subprocess path not yet wired (see #9)."
+        # Production path: lazily import the subprocess wrapper so module
+        # import stays cheap and free of subprocess/binary assumptions
+        # (NFR-5). Run the blocking subprocess off the event loop.
+        from .wrapper import run_whisper_cpp
+
+        text, language, duration_ms = await asyncio.to_thread(
+            run_whisper_cpp, audio, mime
+        )
+        return TranscribeResult(
+            text=text,
+            language=language,
+            duration_ms=duration_ms,
+            provider=self.name,
+            cost_usd=0.0,
         )
