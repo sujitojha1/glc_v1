@@ -44,6 +44,12 @@ def test_max_amplitude_loud():
     assert _max_amplitude(_loud(0.1)) == 16384
 
 
+def test_max_amplitude_single_odd_byte_is_zero():
+    # < one full 16-bit sample → no samples to measure → treated as silent.
+    assert _max_amplitude(b"\x05") == 0
+    assert _is_silent(b"\x05")
+
+
 def test_not_silent_for_loud_audio():
     assert not _is_silent(_loud(0.1))
 
