@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import array
 import asyncio
+import subprocess
 
-from glc.voice.stt.base import STTProvider, TranscribeResult
+from glc.voice.stt.base import STTError, STTProvider, TranscribeResult
 
 # Audio is assumed 16 kHz mono 16-bit PCM (whisper.cpp's native format).
 SAMPLE_RATE = 16000
@@ -90,9 +91,21 @@ class Provider(STTProvider):
         from .wrapper import run_whisper_cpp
 
         use_vad = _should_use_vad(audio)
-        text, language, duration_ms = await asyncio.to_thread(
-            run_whisper_cpp, audio, mime, use_vad
-        )
+        try:
+            text, language, duration_ms = await asyncio.to_thread(
+                run_whisper_cpp, audio, mime, use_vad
+            )
+        except STTError:
+            # Already in the canonical shape (e.g. raised upstream) — let it pass.
+            raise
+        except subprocess.CalledProcessError as e:
+            # Non-zero exit from whisper-cli: surface its status + stderr.
+            detail = (e.stderr or "").strip() or str(e)
+            raise STTError(f"whisper-cli failed: {detail}", status=e.returncode) from e
+        except Exception as e:
+            # Binary/model missing, decode failure, etc. — wrap as STTError so
+            # callers see one error type regardless of provider (IF-3).
+            raise STTError(f"whisper_cpp transcription failed: {e}") from e
         return TranscribeResult(
             text=text,
             language=language,
