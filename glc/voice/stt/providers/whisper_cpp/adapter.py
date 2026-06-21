@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import array
 import asyncio
+import io
 import subprocess
+import wave
 
 from glc.voice.stt.base import STTError, STTProvider, TranscribeResult
 
@@ -22,6 +24,25 @@ BYTES_PER_SAMPLE = 2
 SILENCE_MAX_AMPLITUDE = 32
 # Inputs longer than this are VAD-trimmed (slot README: ">~30s").
 VAD_LENGTH_THRESHOLD_S = 30.0
+
+
+def _pcm_payload(audio: bytes) -> bytes:
+    """Raw PCM samples, stripping a WAV/RIFF container if one is present.
+
+    whisper.cpp's native format is headerless 16 kHz mono 16-bit PCM, but
+    callers commonly send a `.wav` container. A WAV's 44-byte RIFF header
+    is non-zero, so interpreting it as int16 samples would make even a
+    fully silent clip look loud and defeat the silence short-circuit.
+    Pull out just the `data` chunk before measuring; fall back to the raw
+    bytes for headerless PCM or a malformed container.
+    """
+    if audio[:4] == b"RIFF" and audio[8:12] == b"WAVE":
+        try:
+            with wave.open(io.BytesIO(audio), "rb") as w:
+                return w.readframes(w.getnframes())
+        except (wave.Error, EOFError):
+            return audio
+    return audio
 
 
 def _max_amplitude(audio: bytes) -> int:
@@ -41,8 +62,11 @@ def _is_silent(audio: bytes) -> bool:
     subprocess startup for an empty transcript, so the adapter
     short-circuits these before touching upstream. Native `--vad` does
     NOT cover this: it runs inside the subprocess, after startup is paid.
+    Measures the decoded PCM payload, not container-header bytes, so a
+    silent WAV is detected as silent (not just headerless PCM).
     """
-    return not audio or _max_amplitude(audio) <= SILENCE_MAX_AMPLITUDE
+    pcm = _pcm_payload(audio)
+    return not pcm or _max_amplitude(pcm) <= SILENCE_MAX_AMPLITUDE
 
 
 def _duration_s(audio: bytes) -> float:
