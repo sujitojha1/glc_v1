@@ -4,6 +4,11 @@ Expects a `whisper-cli` binary on PATH and a base model at
 ~/.glc/models/whisper-base/ggml-base.bin. Invokes the binary as a
 subprocess, parses the JSON output, returns (text, language,
 duration_ms). The model download is handled by the install script.
+
+When `vad=True` the binary is invoked with whisper.cpp's native
+Voice Activity Detection (`--vad`), which trims internal silence from
+long inputs. VAD needs a Silero model; if it is missing we warn and
+fall back to a plain (no-`--vad`) run rather than failing.
 """
 
 from __future__ import annotations
@@ -13,13 +18,44 @@ import os
 import shutil
 import subprocess
 import tempfile
+import warnings
 from pathlib import Path
 
 MODEL_DIR = Path(os.path.expanduser(os.getenv("GLC_WHISPER_MODEL_DIR", "~/.glc/models/whisper-base")))
 MODEL_FILE = MODEL_DIR / "ggml-base.bin"
 
 
-def run_whisper_cpp(audio: bytes, mime: str) -> tuple[str, str, int]:
+def vad_model_path() -> Path:
+    """Resolve the Silero VAD model path (read per call so it is testable)."""
+    return Path(
+        os.path.expanduser(
+            os.getenv("GLC_WHISPER_VAD_MODEL", str(MODEL_DIR / "ggml-silero-v6.2.0.bin"))
+        )
+    )
+
+
+def _build_argv(cli: str, model: Path, audio_path: Path, vad: bool) -> list[str]:
+    """Build the whisper-cli argv, appending native VAD flags when asked.
+
+    VAD is only added if its model is actually present; a missing model
+    warns and degrades to a plain run instead of failing.
+    """
+    argv = [cli, "-m", str(model), "-f", str(audio_path), "-oj"]
+    if vad:
+        vm = vad_model_path()
+        if vm.exists():
+            argv += ["--vad", "-vm", str(vm)]
+        else:
+            warnings.warn(
+                f"VAD requested but Silero model not found at {vm}; "
+                "running without --vad. Fetch it via "
+                "`./models/download-vad-model.sh silero-v6.2.0`.",
+                stacklevel=2,
+            )
+    return argv
+
+
+def run_whisper_cpp(audio: bytes, mime: str, vad: bool = False) -> tuple[str, str, int]:
     cli = shutil.which("whisper-cli") or shutil.which("whisper.cpp")
     if cli is None:
         raise RuntimeError(
@@ -38,7 +74,7 @@ def run_whisper_cpp(audio: bytes, mime: str) -> tuple[str, str, int]:
         audio_path = Path(f.name)
     try:
         out = subprocess.run(
-            [cli, "-m", str(MODEL_FILE), "-f", str(audio_path), "-oj"],
+            _build_argv(cli, MODEL_FILE, audio_path, vad),
             capture_output=True,
             text=True,
             check=True,

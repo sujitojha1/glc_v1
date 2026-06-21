@@ -9,19 +9,49 @@ Error propagation hardening lands in a later slice.
 
 from __future__ import annotations
 
+import array
 import asyncio
 
 from glc.voice.stt.base import STTProvider, TranscribeResult
 
+# Audio is assumed 16 kHz mono 16-bit PCM (whisper.cpp's native format).
+SAMPLE_RATE = 16000
+BYTES_PER_SAMPLE = 2
+# Max int16 magnitude at/below which a clip counts as silence.
+SILENCE_MAX_AMPLITUDE = 32
+# Inputs longer than this are VAD-trimmed (slot README: ">~30s").
+VAD_LENGTH_THRESHOLD_S = 30.0
+
+
+def _max_amplitude(audio: bytes) -> int:
+    """Peak int16 sample magnitude (little-endian); 0 for empty/odd-only."""
+    n = len(audio) - (len(audio) % BYTES_PER_SAMPLE)
+    if n == 0:
+        return 0
+    samples = array.array("h")
+    samples.frombytes(audio[:n])
+    return max((abs(s) for s in samples), default=0)
+
 
 def _is_silent(audio: bytes) -> bool:
-    """True for empty or zero-amplitude (pure-silence) audio.
+    """True for empty or near-silent audio (peak amplitude under the floor).
 
     Shelling out to whisper-cli on silence wastes hundreds of ms of
     subprocess startup for an empty transcript, so the adapter
-    short-circuits these before touching upstream.
+    short-circuits these before touching upstream. Native `--vad` does
+    NOT cover this: it runs inside the subprocess, after startup is paid.
     """
-    return not audio or not any(audio)
+    return not audio or _max_amplitude(audio) <= SILENCE_MAX_AMPLITUDE
+
+
+def _duration_s(audio: bytes) -> float:
+    """Approximate clip length in seconds (16 kHz mono 16-bit assumption)."""
+    return len(audio) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+
+
+def _should_use_vad(audio: bytes) -> bool:
+    """VAD-trim only long inputs, where internal silence inflates latency."""
+    return _duration_s(audio) > VAD_LENGTH_THRESHOLD_S
 
 
 class Provider(STTProvider):
@@ -59,8 +89,9 @@ class Provider(STTProvider):
         # (NFR-5). Run the blocking subprocess off the event loop.
         from .wrapper import run_whisper_cpp
 
+        use_vad = _should_use_vad(audio)
         text, language, duration_ms = await asyncio.to_thread(
-            run_whisper_cpp, audio, mime
+            run_whisper_cpp, audio, mime, use_vad
         )
         return TranscribeResult(
             text=text,
